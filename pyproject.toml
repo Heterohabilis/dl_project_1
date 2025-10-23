@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "contest-dl-2025"
+version = "0.1.0"
+description = "Environment for Contest_DL_2025.ipynb (no package, deps only)"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Terry" }]
+license = { text = "MIT" }
+dependencies = [
+  "datasets",
+  "pandas",
+  "torch",
+  "tqdm",
+  "transformers",
+  "trl",
+  "unsloth",
+  "unsloth_zoo",
+  "numpy>=1.17,<2.0",
+  "xformers"
+  # NOTE: If you used Google features, install specific packages:
+  #   google-colab / google-auth / google-cloud-storage, etc.
+]
+
+[project.optional-dependencies]
+dev = [
+  "nose2>=0.15",
+  "ruff>=0.6",
+  "mypy>=1.10",
+  "black>=24.3",
+  "isort>=5.13",
+  "ipykernel>=6.29"
+]
+
+# --- Hatch build config ---
+# Since there is no Python package/module, explicitly include the notebook (and metadata files)
+# so Hatch can build both wheels and editable installs without guessing.
+[tool.hatch.build.targets.wheel]
+only-include = [
+  "Contest_DL_2025.ipynb",
+  "pyproject.toml",
+  "README.md"
+]
+# Optional: keep wheels small
+exclude = [".venv", "venv", ".git", ".gitignore", ".mypy_cache", ".ruff_cache", ".pytest_cache"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E","F","I","UP","B"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_configs = true
+check_untyped_defs = true
