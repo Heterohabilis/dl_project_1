@@ -1,0 +1,922 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "h6H4hQVSqblY"
+   },
+   "source": [
+    "## **Step 1: Install Necessary Libraries**\n",
+    "\n",
+    "First, we need to install the required Python libraries. We'll be using the unsloth library, which provides highly efficient, memory-saving training methods for large language models, making it possible to fine-tune powerful models on a single free-tier GPU. We'll also install xformers for further optimization.\n",
+    "\n",
+    "terminal里配置环境  \n",
+    "cd /DL_MidtermPro/  \n",
+    "python3 -m venv .dlp  \n",
+    "source .dlp/bin/activate  \n",
+    "uv pip install --no-cache \"unsloth\"  \n",
+    "pip install ipykernel  \n",
+    "python -m ipykernel install --user --name=\"dlpro-env\" --display-name=\"Python (DLPro Env)\""
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "colab": {
+     "base_uri": "https://localhost:8080/"
+    },
+    "executionInfo": {
+     "elapsed": 311806,
+     "status": "ok",
+     "timestamp": 1761314112754,
+     "user": {
+      "displayName": "Heng Pu",
+      "userId": "11682186451888996445"
+     },
+     "user_tz": 240
+    },
+    "id": "xStnwtpOqK0e",
+    "outputId": "0e76b7a1-efae-4768-87b0-37459b11f2f0"
+   },
+   "outputs": [],
+   "source": [
+    "# %%capture\n",
+    "!pip install ."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "TkuYDaVuravN"
+   },
+   "source": [
+    "## **Step 2: Load the Model and Tokenizer**\n",
+    "\n",
+    "Next, we'll load the Llama-3-8B model, which is the only model permitted for this competition. We'll use Unsloth's FastLanguageModel to handle this efficiently.\n",
+    "\n",
+    "A key technique we'll use is 4-bit quantization (load_in_4bit = True). Think of this as compressing the model's knowledge into a much smaller file size. This significantly reduces the amount of GPU memory required, allowing us to fine-tune this large model even on a free platform like Google Colab.\n",
+    "\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "colab": {
+     "base_uri": "https://localhost:8080/",
+     "height": 582
+    },
+    "executionInfo": {
+     "elapsed": 44,
+     "status": "error",
+     "timestamp": 1761314347535,
+     "user": {
+      "displayName": "Heng Pu",
+      "userId": "11682186451888996445"
+     },
+     "user_tz": 240
+    },
+    "id": "URSw7qlhqlgB",
+    "outputId": "12364bf3-feba-4989-acdf-e1c9f29d6602"
+   },
+   "outputs": [],
+   "source": [
+    "from unsloth import FastLanguageModel\n",
+    "import torch\n",
+    "\n",
+    "max_seq_length = 8192  # Choose any sequence length\n",
+    "dtype = None  # This will auto-detect the best data type for your GPU\n",
+    "load_in_4bit = True  # Use 4-bit quantization to save memory\n",
+    "\n",
+    "# Load the model and tokenizer from Hugging Face\n",
+    "# Note: We use the base model, not a 4-bit pre-quantized one,\n",
+    "# to ensure we start from the official weights.\n",
+    "model, tokenizer = FastLanguageModel.from_pretrained(\n",
+    "    model_name = \"unsloth/Meta-Llama-3.1-8B\", # Competition-approved model\n",
+    "    max_seq_length = max_seq_length,\n",
+    "    dtype = dtype,\n",
+    "    load_in_4bit = load_in_4bit,\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Step 2: Load saved model"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from unsloth import FastLanguageModel\n",
+    "from peft import PeftModel\n",
+    "import torch\n",
+    "\n",
+    "max_seq_length = 8192\n",
+    "model, tokenizer = FastLanguageModel.from_pretrained(\n",
+    "    model_name = \"unsloth/Meta-Llama-3.1-8B\",   \n",
+    "    max_seq_length = max_seq_length,\n",
+    "    dtype = None,\n",
+    "    load_in_4bit = True,                        \n",
+    ")\n",
+    "\n",
+    "model = PeftModel.from_pretrained(model, \"outputs/checkpoint-3000\") #best: 3000\n",
+    "\n",
+    "FastLanguageModel.for_inference(model)\n",
+    "\n",
+    "tokenizer.pad_token = tokenizer.eos_token\n",
+    "tokenizer.padding_side = \"left\" \n",
+    "model.eval()\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "sRznzEwL3W-b"
+   },
+   "source": [
+    "## **Step 3: Prepare the Dataset**\n",
+    "\n",
+    "This is a crucial step where we format our data into a structure the model can learn from. The process involves three parts:\n",
+    "\n",
+    "1.  **Loading**: We'll load the official competition dataset from Hugging Face.\n",
+    "2.  **Splitting**: The full dataset is massive. For this starter notebook, we'll create a much smaller, more manageable version to speed things up: **5,000 samples for training** and **500 for validation**.\n",
+    "3.  **Prompting**: We will format each data sample into a clear instructional prompt. This helps the model understand its role as a mathematician verifying a solution.\n",
+    "\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "executionInfo": {
+     "elapsed": 84,
+     "status": "aborted",
+     "timestamp": 1761314115176,
+     "user": {
+      "displayName": "Heng Pu",
+      "userId": "11682186451888996445"
+     },
+     "user_tz": 240
+    },
+    "id": "etaDwWGN3X7C"
+   },
+   "outputs": [],
+   "source": [
+    "from datasets import load_dataset\n",
+    "\n",
+    "# Load the full training dataset\n",
+    "full_dataset = load_dataset(\"ad6398/nyu-dl-teach-maths-comp\", split=\"train\")\n",
+    "\n",
+    "# Shuffle the dataset for randomness and create our smaller splits\n",
+    "shuffled_dataset = full_dataset.shuffle(seed=114514)\n",
+    "train_dataset = shuffled_dataset.select(range(50000))      # Use the first 5,000 for training\n",
+    "validation_dataset = shuffled_dataset.select(range(50000, 51000)) # Use the next 500 for validation"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "executionInfo": {
+     "elapsed": 87,
+     "status": "aborted",
+     "timestamp": 1761314115180,
+     "user": {
+      "displayName": "Heng Pu",
+      "userId": "11682186451888996445"
+     },
+     "user_tz": 240
+    },
+    "id": "r3oR60QlRc9t"
+   },
+   "outputs": [],
+   "source": [
+    "import re\n",
+    "\n",
+    "def clean_text(text):\n",
+    "    \"\"\"Applies lightweight cleaning to a text string.\"\"\"\n",
+    "\n",
+    "    if not isinstance(text, str):\n",
+    "        return str(text)\n",
+    "\n",
+    "    # text = re.sub(r'```[\\s\\S]*?```', '', text)\n",
+    "\n",
+    "    text = re.sub(r'<[^>]+>', '', text)\n",
+    "\n",
+    "    #while re.search(r'(\\d),(\\d)', text):\n",
+    "        #text = re.sub(r'(\\d),(\\d)', r'\\1\\2', text)\n",
+    "\n",
+    "    text = re.sub(r'[ \\t]+', ' ', text)\n",
+    "    text = re.sub(r'\\n+', '\\n', text)\n",
+    "\n",
+    "    return text.strip()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "executionInfo": {
+     "elapsed": 88,
+     "status": "aborted",
+     "timestamp": 1761314115183,
+     "user": {
+      "displayName": "Heng Pu",
+      "userId": "11682186451888996445"
+     },
+     "user_tz": 240
+    },
+    "id": "i5cL3djv3bRy"
+   },
+   "outputs": [],
+   "source": [
+    "# The instructional prompt template for training\n",
+    "training_prompt = \"\"\"You are a great mathematician and you are tasked with finding if a solution to a given maths question is correct or not. \n",
+    "\n",
+    "Let's think step-by-step to determine if the provided solution is correct. Consider the following aspects during your evaluation:\n",
+    "1.  **Understanding:** Does the solution correctly interpret what the question is asking and use the given information properly?\n",
+    "2.  **Approach:** Is the method or strategy used in the solution logically sound and appropriate for the problem?\n",
+    "3.  **Execution:** Are the calculations, algebraic manipulations, logical deductions, and steps performed accurately? Check each step carefully.\n",
+    "4.  **Final Answer Check:** Is the final result derived correctly from the preceding steps, and does it directly answer the specific question asked?\n",
+    "\n",
+    "After carefully considering all these steps in your internal thought process, provide your final verdict. Your response should be *only* the single word 'True' if the *entire* solution (understanding, approach, execution, and final answer) is correct, or *only* the single word 'False' otherwise. Do not include your step-by-step thinking process in the output itself.\n",
+    "\n",
+    "Below is the Question and Solution.\n",
+    "Question:\n",
+    "{}\n",
+    "Solution:\n",
+    "{}\n",
+    "Output:\n",
+    "{}\n",
+    "\"\"\"\n",
+    "\n",
+    "# We must add an End Of Sequence (EOS) token to tell the model when a completion is finished.\n",
+    "EOS_TOKEN = tokenizer.eos_token\n",
+    "\n",
+    "# This function formats our data samples into the prompt template.\n",
+    "def formatting_prompts_func(examples):\n",
+    "    questions = examples[\"question\"]\n",
+    "    solutions = examples[\"solution\"]\n",
+    "    outputs = examples[\"is_correct\"]\n",
+    "    texts = []\n",
+    "    for question, solution, output in zip(questions, solutions, outputs):\n",
+    "        # Format the prompt and add the EOS token\n",
+    "        question = clean_text(question)\n",
+    "        solution = clean_text(str(solution))\n",
+    "        text = training_prompt.format(question, str(solution), str(output)) + EOS_TOKEN\n",
+    "        texts.append(text)\n",
+    "    return { \"text\" : texts }\n",
+    "\n",
+    "# Apply the formatting function to our training dataset\n",
+    "formatted_train_dataset = train_dataset.map(formatting_prompts_func, batched=True)\n",
+    "formatted_validation_dataset = validation_dataset.map(formatting_prompts_func, batched=True)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "K8Fs1qmn37-F"
+   },
+   "source": [
+    "## **Step 4: Configure LoRA and Set Up the Trainer**\n",
+    "\n",
+    "### **LoRA Configuration**\n",
+    "\n",
+    "Instead of training the entire model (which has billions of parameters), we'll use a technique called **Lo**w-**R**ank **A**daptation (LoRA). 🎛️\n",
+    "\n",
+    "Think of it like this: rather than rewriting an entire textbook, we're just adding small, efficient \"sticky notes\" (the LoRA adapters) to update the model's knowledge. This is much faster and requires significantly less memory. We'll use a small **rank** (`r = 8`) to keep the training process light and quick for this starter notebook.\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "executionInfo": {
+     "elapsed": 91,
+     "status": "aborted",
+     "timestamp": 1761314115187,
+     "user": {
+      "displayName": "Heng Pu",
+      "userId": "11682186451888996445"
+     },
+     "user_tz": 240
+    },
+    "id": "lEaRjozB3tz8"
+   },
+   "outputs": [],
+   "source": [
+    "model = FastLanguageModel.get_peft_model(\n",
+    "    model,\n",
+    "    r = 64, # A small rank for lighter training\n",
+    "    target_modules = [\"q_proj\", \"k_proj\", \"v_proj\", \"o_proj\",\n",
+    "                      \"gate_proj\", \"up_proj\", \"down_proj\"],\n",
+    "    lora_alpha = 128, # A common practice is to set alpha = 2 * r\n",
+    "    lora_dropout = 0,\n",
+    "    bias = \"none\",\n",
+    "    use_gradient_checkpointing = \"unsloth\",\n",
+    "    random_state = 42,\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "HCHdotc14DgH"
+   },
+   "source": [
+    "\n",
+    "### **SFTTrainer Setup**\n",
+    "\n",
+    "Now we'll set up the `SFTTrainer` (Supervised Fine-tuning Trainer). This is the main tool from the `trl` library that will handle the entire training loop for us. We'll give it our model, tokenizer, dataset, and a set of training instructions, such as the batch size and number of epochs.\n",
+    "\n",
+    "We will train for just **one epoch** (a single pass over our 5,000-sample dataset) to keep this demonstration fast."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "executionInfo": {
+     "elapsed": 93,
+     "status": "aborted",
+     "timestamp": 1761314115190,
+     "user": {
+      "displayName": "Heng Pu",
+      "userId": "11682186451888996445"
+     },
+     "user_tz": 240
+    },
+    "id": "yVZHQ4y74BCG"
+   },
+   "outputs": [],
+   "source": [
+    "from trl import SFTTrainer\n",
+    "from transformers import TrainingArguments, EarlyStoppingCallback\n",
+    "\n",
+    "small_eval_dataset = formatted_validation_dataset.shuffle(seed=42).select(range(200))\n",
+    "\n",
+    "trainer = SFTTrainer(\n",
+    "    model = model,\n",
+    "    tokenizer = tokenizer,\n",
+    "    train_dataset = formatted_train_dataset,\n",
+    "    eval_dataset = small_eval_dataset,\n",
+    "    dataset_text_field = \"text\",\n",
+    "    max_seq_length = max_seq_length,\n",
+    "    args = TrainingArguments(\n",
+    "        per_device_train_batch_size = 16,\n",
+    "        gradient_accumulation_steps = 1,\n",
+    "        # warmup_steps = 20,,\n",
+    "        warmup_ratio=0.015,\n",
+    "        learning_rate = 1e-4,\n",
+    "        fp16 = not torch.cuda.is_bf16_supported(),\n",
+    "        bf16 = torch.cuda.is_bf16_supported(),\n",
+    "        optim = \"adamw_8bit\",\n",
+    "        weight_decay = 0.01,\n",
+    "        lr_scheduler_type = \"cosine\",\n",
+    "        seed = 42,\n",
+    "        output_dir = \"outputs\",\n",
+    "        report_to = \"none\",\n",
+    "        do_eval = True,\n",
+    "        eval_strategy= \"steps\",\n",
+    "        eval_steps = 25,\n",
+    "        save_steps = 200,\n",
+    "        load_best_model_at_end = True,\n",
+    "        metric_for_best_model = \"eval_loss\",\n",
+    "        greater_is_better = False,\n",
+    "        max_grad_norm = 1.0,\n",
+    "\n",
+    "        #added following\n",
+    "        #max_steps = 700,\n",
+    "        num_train_epochs = 1,\n",
+    "        logging_steps= 25,\n",
+    "    ),\n",
+    "    callbacks = [EarlyStoppingCallback(early_stopping_patience = 3)],\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "GTHBzKeM4zF6"
+   },
+   "source": [
+    "## **Step 5: Start Training\\!**\n",
+    "\n",
+    "Now, we'll call the `train()` function on our `trainer` object. This will kick off the fine-tuning process. Based on our settings, this will run for one full epoch over our 5,000 examples.\n",
+    "\n",
+    "Grab a coffee, as this will take a few minutes\\! ☕\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "executionInfo": {
+     "elapsed": 314285,
+     "status": "aborted",
+     "timestamp": 1761314115193,
+     "user": {
+      "displayName": "Heng Pu",
+      "userId": "11682186451888996445"
+     },
+     "user_tz": 240
+    },
+    "id": "YVrNhZ4y4zsK"
+   },
+   "outputs": [],
+   "source": [
+    "trainer.train()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "8LfJfk5gIyIV"
+   },
+   "source": [
+    "\n",
+    "## **Step 6: Inference and Evaluation**\n",
+    "\n",
+    "Now that our model is trained, we need to test it on our validation set. We'll use a slightly different prompt for inference—one where we leave the `Output:` section blank for the model to complete.\n",
+    "\n",
+    "Let's test it on a single example from our validation set to see what it predicts."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "executionInfo": {
+     "elapsed": 314286,
+     "status": "aborted",
+     "timestamp": 1761314115196,
+     "user": {
+      "displayName": "Heng Pu",
+      "userId": "11682186451888996445"
+     },
+     "user_tz": 240
+    },
+    "id": "agvQR_Ku5wWY"
+   },
+   "outputs": [],
+   "source": [
+    "# Prepare the model for faster inference\n",
+    "FastLanguageModel.for_inference(model)\n",
+    "\n",
+    "# Create the prompt template for inference (no answer included)\n",
+    "inference_prompt = \"\"\"You are a great mathematician and you are tasked with finding if a solution to a given maths question is correct or not. \n",
+    "\n",
+    "Let's think step-by-step to determine if the provided solution is correct. Consider the following aspects during your evaluation:\n",
+    "1.  **Understanding:** Does the solution correctly interpret what the question is asking and use the given information properly?\n",
+    "2.  **Approach:** Is the method or strategy used in the solution logically sound and appropriate for the problem?\n",
+    "3.  **Execution:** Are the calculations, algebraic manipulations, logical deductions, and steps performed accurately? Check each step carefully.\n",
+    "4.  **Final Answer Check:** Is the final result derived correctly from the preceding steps, and does it directly answer the specific question asked?\n",
+    "\n",
+    "After carefully considering all these steps in your internal thought process, provide your final verdict. Your response should be *only* the single word 'True' if the *entire* solution (understanding, approach, execution, and final answer) is correct, or *only* the single word 'False' otherwise. Do not include your step-by-step thinking process in the output itself.\n",
+    "\n",
+    "Below is the Question and Solution.\n",
+    "Question:\n",
+    "{}\n",
+    "Solution:\n",
+    "{}\n",
+    "Output:\n",
+    "\"\"\"\n",
+    "# Select a sample from the validation set\n",
+    "example = validation_dataset[100] # You can change the index (e.g., to 1, 2, 50)\n",
+    "question = clean_text(example[\"question\"])\n",
+    "solution = clean_text(example[\"solution\"])\n",
+    "\n",
+    "# Format the prompt with the validation data\n",
+    "inputs = tokenizer(\n",
+    "[\n",
+    "    inference_prompt.format(question, str(solution))\n",
+    "], return_tensors = \"pt\").to(\"cuda\")\n",
+    "\n",
+    "# Generate the model's response\n",
+    "outputs = model.generate(**inputs, max_new_tokens = 8, use_cache = True)\n",
+    "response = tokenizer.batch_decode(outputs)\n",
+    "\n",
+    "# Print the results\n",
+    "print(\"#### QUESTION ####\")\n",
+    "# print(question)\n",
+    "print(\"\\n#### SOLUTION ####\")\n",
+    "# print(solution)\n",
+    "print(\"\\n#### MODEL'S PREDICTION ####\")\n",
+    "# We process the output to show only the generated text\n",
+    "print(response[0].split(\"Output:\\n\")[1])\n",
+    "print(\"\\n#### CORRECT ANSWER ####\")\n",
+    "print(example[\"is_correct\"])"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "executionInfo": {
+     "elapsed": 314306,
+     "status": "aborted",
+     "timestamp": 1761314115219,
+     "user": {
+      "displayName": "Heng Pu",
+      "userId": "11682186451888996445"
+     },
+     "user_tz": 240
+    },
+    "id": "Tfg2X-zdTvm6"
+   },
+   "outputs": [],
+   "source": [
+    "import random\n",
+    "from tqdm import tqdm\n",
+    "import re\n",
+    "\n",
+    "def parse_output(response_text):\n",
+    "    output_part = response_text.split(\"Output:\\n\")[-1]\n",
+    "    if 'true' in output_part.lower():\n",
+    "        return True\n",
+    "    return False\n",
+    "\n",
+    "def calculate_accuracy(ground_truths, predictions):\n",
+    "    if not ground_truths:\n",
+    "        return 0.0\n",
+    "\n",
+    "    correct_count = 0\n",
+    "    total_count = len(ground_truths)\n",
+    "\n",
+    "    for gt, pred in zip(ground_truths, predictions):\n",
+    "        if gt == pred:\n",
+    "            correct_count += 1\n",
+    "\n",
+    "    return correct_count / total_count\n",
+    "\n",
+    "num_samples = 1000\n",
+    "random_samples = validation_dataset.shuffle(seed=42).select(range(num_samples))\n",
+    "\n",
+    "model_predictions = []\n",
+    "ground_truths = []\n",
+    "\n",
+    "print(f\"Running inference on {num_samples} random validation samples...\")\n",
+    "\n",
+    "for example in tqdm(random_samples):\n",
+    "\n",
+    "    question = clean_text(example[\"question\"])\n",
+    "    solution = clean_text(example[\"solution\"])\n",
+    "    correct_answer = example[\"is_correct\"]\n",
+    "\n",
+    "    prompt = inference_prompt.format(question, str(solution))\n",
+    "    inputs = tokenizer([prompt], return_tensors=\"pt\").to(\"cuda\")\n",
+    "\n",
+    "    outputs = model.generate(**inputs, max_new_tokens=8, use_cache=True)\n",
+    "    response_text = tokenizer.batch_decode(outputs)[0]\n",
+    "\n",
+    "    model_pred_bool = parse_output(response_text)\n",
+    "    model_predictions.append(model_pred_bool)\n",
+    "    ground_truths.append(correct_answer)\n",
+    "\n",
+    "accuracy = calculate_accuracy(ground_truths, model_predictions)\n",
+    "\n",
+    "print(f\"\\nCalculation complete.\")\n",
+    "print(f\"Validation Accuracy on {num_samples} random samples: {accuracy * 100:.2f}%\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Logits + Knowing Mistakes"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "\n",
+    "import pandas as pd\n",
+    "from tqdm import tqdm\n",
+    "\n",
+    "model_predictions = []\n",
+    "ground_truths = []\n",
+    "error_analysis = [] \n",
+    "num_samples = 1000\n",
+    "true_token_ids = list(set([\n",
+    "    tokenizer.encode(\"True\", add_special_tokens=False)[-1],\n",
+    "    tokenizer.encode(\" True\", add_special_tokens=False)[-1]\n",
+    "]))\n",
+    "false_token_ids = list(set([\n",
+    "    tokenizer.encode(\"False\", add_special_tokens=False)[-1],\n",
+    "    tokenizer.encode(\" False\", add_special_tokens=False)[-1]\n",
+    "]))\n",
+    "print(f\"Running inference on {num_samples} random validation samples...\")\n",
+    "\n",
+    "model.eval()\n",
+    "with torch.no_grad():\n",
+    "    for example in tqdm(random_samples):\n",
+    "        question = clean_text(example[\"question\"])\n",
+    "        solution = clean_text(example[\"solution\"])\n",
+    "        correct_answer = example[\"is_correct\"] # bool\n",
+    "\n",
+    "        prompt = inference_prompt.format(question, str(solution))\n",
+    "        inputs = tokenizer(prompt, return_tensors=\"pt\").to(\"cuda\")\n",
+    "        \n",
+    "        outputs = model(**inputs)\n",
+    "        logits = outputs.logits\n",
+    "        last_token_logits = logits[0, -1, :]\n",
+    "        \n",
+    "        true_score = torch.max(last_token_logits[true_token_ids])\n",
+    "        false_score = torch.max(last_token_logits[false_token_ids])\n",
+    "\n",
+    "        prediction = (true_score > false_score).item() # bool\n",
+    "        \n",
+    "        model_predictions.append(prediction)\n",
+    "        ground_truths.append(correct_answer)\n",
+    "        \n",
+    "        if prediction != correct_answer:\n",
+    "            error_analysis.append({\n",
+    "                \"question\": example[\"question\"], \n",
+    "                \"solution\": example[\"solution\"], \n",
+    "                \"cleaned_solution\": solution,    \n",
+    "                \"prediction\": prediction,      # True / False\n",
+    "                \"ground_truth\": correct_answer # True / False\n",
+    "            })\n",
+    "\n",
+    "accuracy = calculate_accuracy(ground_truths, model_predictions)\n",
+    "print(f\"\\nCalculation complete.\")\n",
+    "print(f\"Validation Accuracy: {accuracy * 100:.2f}%\")\n",
+    "\n",
+    "error_df = pd.DataFrame(error_analysis)\n",
+    "print(f\"Found {len(error_df)} errors out of {num_samples} samples.\")\n",
+    "# error_df.to_csv(\"validation_errors.csv\", index=False)\n",
+    "# print(\"Errors saved to validation_errors.csv\")\n",
+    "\n",
+    "if not error_df.empty:\n",
+    "    print(\"\\n--- SAMPLE ERRORS ---\")\n",
+    "    pd.set_option('display.max_colwidth', 300) \n",
+    "    print(error_df.head())\n",
+    "    error_df.to_csv(\"validation_errors.csv\", index=False)\n",
+    "\n",
+    "    print(\"\\nerror file 'validation_errors.csv' is saved！\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Generate Submission"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import pandas as pd\n",
+    "from tqdm import tqdm\n",
+    "\n",
+    "# Load the official test set\n",
+    "test_dataset = load_dataset(\"ad6398/nyu-dl-teach-maths-comp\", split=\"test\")\n",
+    "predictions = []\n",
+    "\n",
+    "# A simple function to parse 'True' or 'False' from the model's raw output\n",
+    "def parse_output(response_text):\n",
+    "    # Find the text after \"Output:\"\n",
+    "    output_part = response_text.split(\"Output:\\n\")[-1]\n",
+    "    # Check if \"True\" is in that part, case-insensitively￼ [ 3/25 00:01 < 00:21, 1.05 it/s]\n",
+    "    if 'true' in output_part.lower():\n",
+    "        return True\n",
+    "    return False\n",
+    "\n",
+    "# Loop through the test dataset and generate a prediction for each example\n",
+    "for example in tqdm(test_dataset):\n",
+    "    question = clean_text(example[\"question\"])\n",
+    "    solution = clean_text(example[\"solution\"])\n",
+    "\n",
+    "    # Format the prompt\n",
+    "    prompt = inference_prompt.format(question, str(solution))\n",
+    "    inputs = tokenizer([prompt], return_tensors=\"pt\").to(\"cuda\")\n",
+    "\n",
+    "    # Generate the prediction\n",
+    "    outputs = model.generate(**inputs, max_new_tokens=8, use_cache=True)\n",
+    "    response_text = tokenizer.batch_decode(outputs)[0]\n",
+    "\n",
+    "    # Parse the prediction and add it to our list\n",
+    "    prediction = parse_output(response_text)\n",
+    "    predictions.append(prediction)\n",
+    "\n",
+    "# Create the submission DataFrame\n",
+    "submission = pd.DataFrame({\n",
+    "    'ID': range(len(predictions)),\n",
+    "    'is_correct': predictions\n",
+    "})\n",
+    "\n",
+    "# Save the DataFrame to a CSV file\n",
+    "submission.to_csv('submission.csv', index=False)\n",
+    "\n",
+    "print(\"\\nSubmission file 'submission.csv' created successfully!\")\n",
+    "print(\"You can now download this file and submit it to the Kaggle competition.\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import pandas as pd\n",
+    "from tqdm import tqdm\n",
+    "import torch\n",
+    "from datasets import load_dataset \n",
+    "\n",
+    "true_token_ids = list(set([\n",
+    "    tokenizer.encode(\"True\", add_special_tokens=False)[-1],\n",
+    "    tokenizer.encode(\" True\", add_special_tokens=False)[-1]\n",
+    "]))\n",
+    "false_token_ids = list(set([\n",
+    "    tokenizer.encode(\"False\", add_special_tokens=False)[-1],\n",
+    "    tokenizer.encode(\" False\", add_special_tokens=False)[-1]\n",
+    "]))\n",
+    "\n",
+    "print(f\"Logits inference mode\")\n",
+    "print(f\"Will Compare Token IDs - True: {true_token_ids} vs False: {false_token_ids}\")\n",
+    "\n",
+    "test_dataset = load_dataset(\"ad6398/nyu-dl-teach-maths-comp\", split=\"test\")\n",
+    "predictions = []\n",
+    "\n",
+    "model.eval()\n",
+    "with torch.no_grad():\n",
+    "    for example in tqdm(test_dataset, desc=\"Generating submission using logits\"):\n",
+    "        question = clean_text(example[\"question\"])\n",
+    "        solution = clean_text(example[\"solution\"])\n",
+    "\n",
+    "        prompt = inference_prompt.format(question, str(solution))\n",
+    "        inputs = tokenizer([prompt], return_tensors=\"pt\").to(\"cuda\")\n",
+    "\n",
+    "        outputs = model(**inputs)\n",
+    "        logits = outputs.logits\n",
+    "\n",
+    "        last_token_logits = logits[0, -1, :]\n",
+    "\n",
+    "        true_score = torch.max(last_token_logits[true_token_ids])\n",
+    "        false_score = torch.max(last_token_logits[false_token_ids])\n",
+    "\n",
+    "        prediction = true_score > false_score\n",
+    "        predictions.append(prediction.item()) \n",
+    "\n",
+    "submission = pd.DataFrame({\n",
+    "    'ID': range(len(predictions)),\n",
+    "    'is_correct': predictions\n",
+    "})\n",
+    "\n",
+    "submission.to_csv('submission.csv', index=False)\n",
+    "\n",
+    "print(\"\\nSubmission file 'submission.csv' created successfully using logits!\")\n",
+    "print(\"You can now download this file and submit it to the Kaggle competition.\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "5489c0ed"
+   },
+   "source": [
+    "# SAVE THE MODEL TO DRIVE AND RUN INFERENCE\n",
+    "Add code to save the model checkpoint to Google Drive, load the model from the checkpoint, and generate the final submission CSV file."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "0b1e0a43"
+   },
+   "source": [
+    "## Mount google drive\n",
+    "\n",
+    "### Subtask:\n",
+    "Mount Google Drive to save the model checkpoint.\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "3b8ab404"
+   },
+   "source": [
+    "**Reasoning**:\n",
+    "Mount Google Drive to save the model checkpoint.\n",
+    "\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "executionInfo": {
+     "elapsed": 314308,
+     "status": "aborted",
+     "timestamp": 1761314115222,
+     "user": {
+      "displayName": "Heng Pu",
+      "userId": "11682186451888996445"
+     },
+     "user_tz": 240
+    },
+    "id": "5e020e6b"
+   },
+   "outputs": [],
+   "source": [
+    "from google.colab import drive\n",
+    "drive.mount('/content/drive')"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "4c28a7dd"
+   },
+   "source": [
+    "## Save model checkpoint\n",
+    "\n",
+    "### Subtask:\n",
+    "Save the trained model checkpoint to the specified path in Google Drive.\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "fe96ff59"
+   },
+   "source": [
+    "**Reasoning**:\n",
+    "Define the save path and save the model and tokenizer to Google Drive.\n",
+    "\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "executionInfo": {
+     "elapsed": 314308,
+     "status": "aborted",
+     "timestamp": 1761314115225,
+     "user": {
+      "displayName": "Heng Pu",
+      "userId": "11682186451888996445"
+     },
+     "user_tz": 240
+    },
+    "id": "5ec9d6bf"
+   },
+   "outputs": [],
+   "source": [
+    "import os\n",
+    "\n",
+    "# Define the path to save the model checkpoint in Google Drive\n",
+    "save_path = \"/content/drive/MyDrive/DLMidModelCheckpoint/BT_ralpha_3264\"\n",
+    "\n",
+    "# Create the directory if it doesn't exist\n",
+    "os.makedirs(save_path, exist_ok=True)\n",
+    "\n",
+    "# Save the model and tokenizer\n",
+    "model.save_pretrained(save_path)\n",
+    "tokenizer.save_pretrained(save_path)\n",
+    "\n",
+    "#print(f\"Model checkpoint and tokenizer saved to: {save_path}\")"
+   ]
+  }
+ ],
+ "metadata": {
+  "accelerator": "GPU",
+  "colab": {
+   "gpuType": "T4",
+   "provenance": []
+  },
+  "kernelspec": {
+   "display_name": ".venv (3.11.13)",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.11.13"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
+}
