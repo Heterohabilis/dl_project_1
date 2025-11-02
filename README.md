@@ -16,3 +16,6 @@ This is the repository of the 1st project of deep learning.
   # install all required packages (run once)
   pip install -e .[dev]
   ```
+
+## Final weights
+[Here](https://drive.google.com/file/d/1upInymRKWMqopW24A2qT0wbjFayrrR6t/view?usp=sharing)
