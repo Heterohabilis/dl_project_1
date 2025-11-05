@@ -21,5 +21,5 @@ This is the repository of the 1st project of deep learning.
 [Here](https://drive.google.com/file/d/1upInymRKWMqopW24A2qT0wbjFayrrR6t/view?usp=sharing)
 
 ## Miscellaneous
-- The final version of our project is `final.ipynb`.
+- The final version of our project is [`final.ipynb`](https://github.com/Heterohabilis/dl_project_1/blob/main/final.ipynb).
 - Other files contain similar code but with different configurations. Also, the execution orders can be different.
